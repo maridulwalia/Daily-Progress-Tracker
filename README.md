@@ -3,8 +3,6 @@
 
 A beautiful, animated habit tracking app built with React, TailwindCSS, Recharts, Framer Motion, and IndexedDB.
 
-![Demo Screenshot](screenshot.png)
-
 ## ✨ Features
 
 - ✅ Add and remove daily habits
@@ -24,8 +22,6 @@ A beautiful, animated habit tracking app built with React, TailwindCSS, Recharts
 - IndexedDB (idb)
 
 ## 🚀 Getting Started
-
-```bash
 git clone https://github.com/YOUR_USERNAME/daily-tracker.git
 cd daily-tracker
 npm install
