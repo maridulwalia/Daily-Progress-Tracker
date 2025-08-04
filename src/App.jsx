@@ -2,91 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line } from 'recharts';
 import { Plus, X, Calendar, TrendingUp, Award, Target, Edit2, Save, AlertCircle, ChevronDown, ChevronUp, Star } from 'lucide-react';
 
-// IndexedDB utilities
-const DB_NAME = 'ProgressTrackerDB';
-const DB_VERSION = 1;
-
-const initDB = () => {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      
-      if (!db.objectStoreNames.contains('tasks')) {
-        const taskStore = db.createObjectStore('tasks', { keyPath: 'id' });
-        taskStore.createIndex('priority', 'priority', { unique: false });
-      }
-      
-      if (!db.objectStoreNames.contains('completions')) {
-        db.createObjectStore('completions', { keyPath: 'id' });
-      }
-    };
-  });
-};
-
-const saveToIndexedDB = async (storeName, data) => {
-  const db = await initDB();
-  const transaction = db.transaction([storeName], 'readwrite');
-  const store = transaction.objectStore(storeName);
-  
-  if (Array.isArray(data)) {
-    for (const item of data) {
-      await store.put(item);
-    }
-  } else {
-    await store.put(data);
-  }
-  
-  return transaction.complete;
-};
-
-const loadFromIndexedDB = async (storeName) => {
-  const db = await initDB();
-  const transaction = db.transaction([storeName], 'readonly');
-  const store = transaction.objectStore(storeName);
-  const request = store.getAll();
-  
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-};
-
-// Animation variants
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.1
-    }
-  }
-};
-
-const itemVariants = {
-  hidden: { y: 20, opacity: 0 },
-  visible: {
-    y: 0,
-    opacity: 1,
-    transition: {
-      type: "spring",
-      stiffness: 100
-    }
-  }
-};
-
 const DailyProgressTracker = () => {
   const [tasks, setTasks] = useState([]);
   const [newTaskName, setNewTaskName] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
   const [dailyCompletion, setDailyCompletion] = useState({});
-  const [totalDays, setTotalDays] = useState(7);
+  const [totalDays, setTotalDays] = useState(1); // Changed default to 1 day
   const [editingTask, setEditingTask] = useState(null);
-  const [viewMode, setViewMode] = useState('daily'); // daily, weekly, monthly
+  const [viewMode, setViewMode] = useState('daily');
   const [showSummaries, setShowSummaries] = useState(false);
   
   const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'];
@@ -96,51 +19,42 @@ const DailyProgressTracker = () => {
     low: '#2ED573'
   };
 
-  // Load data from IndexedDB on mount
+  // Load data from memory on mount (simulating persistence)
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [loadedTasks, loadedCompletions] = await Promise.all([
-          loadFromIndexedDB('tasks'),
-          loadFromIndexedDB('completions')
-        ]);
-        
-        if (loadedTasks.length > 0) {
-          setTasks(loadedTasks.sort((a, b) => {
-            const priorityOrder = { high: 3, medium: 2, low: 1 };
-            return priorityOrder[b.priority] - priorityOrder[a.priority];
-          }));
-        }
-        
-        if (loadedCompletions.length > 0) {
-          const completionMap = {};
-          loadedCompletions.forEach(completion => {
-            completionMap[completion.id] = completion.data;
-          });
-          setDailyCompletion(completionMap);
-        }
-      } catch (error) {
-        console.error('Failed to load data from IndexedDB:', error);
-      }
-    };
+    const savedTasks = localStorage.getItem('progressTrackerTasks');
+    const savedCompletions = localStorage.getItem('progressTrackerCompletions');
     
-    loadData();
+    if (savedTasks) {
+      try {
+        const parsedTasks = JSON.parse(savedTasks);
+        setTasks(parsedTasks.sort((a, b) => {
+          const priorityOrder = { high: 3, medium: 2, low: 1 };
+          return priorityOrder[b.priority] - priorityOrder[a.priority];
+        }));
+      } catch (error) {
+        console.error('Failed to load tasks:', error);
+      }
+    }
+    
+    if (savedCompletions) {
+      try {
+        setDailyCompletion(JSON.parse(savedCompletions));
+      } catch (error) {
+        console.error('Failed to load completions:', error);
+      }
+    }
   }, []);
 
-  // Save data to IndexedDB when tasks or completions change
+  // Save data to memory when tasks or completions change
   useEffect(() => {
     if (tasks.length > 0) {
-      saveToIndexedDB('tasks', tasks);
+      localStorage.setItem('progressTrackerTasks', JSON.stringify(tasks));
     }
   }, [tasks]);
 
   useEffect(() => {
-    const completionEntries = Object.entries(dailyCompletion).map(([date, data]) => ({
-      id: date,
-      data: data
-    }));
-    if (completionEntries.length > 0) {
-      saveToIndexedDB('completions', completionEntries);
+    if (Object.keys(dailyCompletion).length > 0) {
+      localStorage.setItem('progressTrackerCompletions', JSON.stringify(dailyCompletion));
     }
   }, [dailyCompletion]);
 
@@ -339,6 +253,27 @@ const DailyProgressTracker = () => {
     }
   };
 
+  const getDayLabel = () => {
+    switch (totalDays) {
+      case 1:
+        return 'Today';
+      case 7:
+        return 'Last 7 days';
+      case 14:
+        return 'Last 14 days';
+      case 30:
+        return 'Last 30 days';
+      default:
+        return `Last ${totalDays} days`;
+    }
+  };
+
+  const getTodayCompletionCount = () => {
+    const today = getTodayDate();
+    if (!dailyCompletion[today]) return 0;
+    return Object.values(dailyCompletion[today]).filter(Boolean).length;
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-6">
       <div className="max-w-6xl mx-auto">
@@ -384,7 +319,7 @@ const DailyProgressTracker = () => {
               <Calendar className="h-8 w-8 text-green-500 mr-3" />
               <div>
                 <p className="text-sm text-gray-600">Tracking Period</p>
-                <p className="text-2xl font-bold text-gray-800">{totalDays} days</p>
+                <p className="text-2xl font-bold text-gray-800">{getDayLabel()}</p>
               </div>
             </div>
           </div>
@@ -393,8 +328,12 @@ const DailyProgressTracker = () => {
             <div className="flex items-center">
               <TrendingUp className="h-8 w-8 text-orange-500 mr-3" />
               <div>
-                <p className="text-sm text-gray-600">Active Tasks</p>
-                <p className="text-2xl font-bold text-gray-800">{tasks.length}</p>
+                <p className="text-sm text-gray-600">
+                  {totalDays === 1 ? 'Completed Today' : 'Active Tasks'}
+                </p>
+                <p className="text-2xl font-bold text-gray-800">
+                  {totalDays === 1 ? `${getTodayCompletionCount()}/${tasks.length}` : tasks.length}
+                </p>
               </div>
             </div>
           </div>
@@ -457,6 +396,7 @@ const DailyProgressTracker = () => {
                 onChange={(e) => setTotalDays(parseInt(e.target.value))}
                 className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
               >
+                <option value={1}>Today only</option>
                 <option value={7}>Last 7 days</option>
                 <option value={14}>Last 14 days</option>
                 <option value={30}>Last 30 days</option>
@@ -518,7 +458,11 @@ const DailyProgressTracker = () => {
                           </span>
                         </div>
                         <div className="text-sm text-gray-600">
-                          {getTaskCompletionRate(task.id)}% completed • {getStreak(task.id)} day streak
+                          {totalDays === 1 ? (
+                            dailyCompletion[getTodayDate()]?.[task.id] ? 'Completed today' : 'Not completed today'
+                          ) : (
+                            `${getTaskCompletionRate(task.id)}% completed • ${getStreak(task.id)} day streak`
+                          )}
                         </div>
                       </div>
                     )}
@@ -703,6 +647,21 @@ const DailyProgressTracker = () => {
                     })}
                   </div>
                 </div>
+
+                {/* Today's Summary for 1-day view */}
+                {totalDays === 1 && (
+                  <div className="p-4 bg-indigo-50 rounded-lg">
+                    <h3 className="font-semibold text-indigo-800 mb-2">Today's Progress</h3>
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-indigo-600 mb-1">
+                        {getTodayCompletionCount()}/{tasks.length}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        {tasks.length > 0 ? `${Math.round((getTodayCompletionCount() / tasks.length) * 100)}% completed` : 'No tasks yet'}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -710,7 +669,9 @@ const DailyProgressTracker = () => {
 
         {/* Daily View */}
         <div className="mt-8 bg-white rounded-xl p-6 shadow-lg">
-          <h2 className="text-2xl font-bold text-gray-800 mb-6">Daily History</h2>
+          <h2 className="text-2xl font-bold text-gray-800 mb-6">
+            {totalDays === 1 ? "Today's Tasks" : "Daily History"}
+          </h2>
           
           <div className="overflow-x-auto">
             <div className="flex space-x-2 pb-4">
