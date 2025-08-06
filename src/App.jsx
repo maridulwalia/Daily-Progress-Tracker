@@ -112,7 +112,7 @@ const DailyProgressTracker = () => {
   };
 
   const getTodayDate = () => {
-    return new Date().toISOString().split('T')[0];
+    return new Date().toLocaleDateString('en-CA');
   };
 
   const getTaskCompletionRate = (taskId) => {
@@ -122,7 +122,7 @@ const DailyProgressTracker = () => {
     startDate.setDate(endDate.getDate() - totalDays + 1);
 
     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = d.toLocaleDateString('en-CA');
       if (dailyCompletion[dateStr] && dailyCompletion[dateStr][taskId]) {
         completedCount++;
       }
@@ -138,7 +138,8 @@ const DailyProgressTracker = () => {
     for (let i = 0; i < 30; i++) {
       const date = new Date(today);
       date.setDate(today.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
+      const dateStr = date.toLocaleDateString('en-CA')
+      ;
       
       if (dailyCompletion[dateStr] && dailyCompletion[dateStr][taskId]) {
         streak++;
@@ -190,7 +191,7 @@ const DailyProgressTracker = () => {
       let totalPossible = 0;
       
       for (let d = new Date(weekStart); d <= weekEnd; d.setDate(d.getDate() + 1)) {
-        const dateStr = d.toISOString().split('T')[0];
+        const dateStr = d.toLocaleDateString('en-CA');
         tasks.forEach(task => {
           totalPossible++;
           if (dailyCompletion[dateStr] && dailyCompletion[dateStr][task.id]) {
@@ -222,7 +223,7 @@ const DailyProgressTracker = () => {
       let totalPossible = 0;
       
       for (let d = new Date(monthDate); d <= monthEnd; d.setDate(d.getDate() + 1)) {
-        const dateStr = d.toISOString().split('T')[0];
+        const dateStr = d.toLocaleDateString('en-CA');
         tasks.forEach(task => {
           totalPossible++;
           if (dailyCompletion[dateStr] && dailyCompletion[dateStr][task.id]) {
