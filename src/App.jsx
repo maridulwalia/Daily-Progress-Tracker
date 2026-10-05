@@ -1,17 +1,34 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line } from 'recharts';
 import { Plus, X, Calendar, TrendingUp, Award, Target, Edit2, Save, AlertCircle, ChevronDown, ChevronUp, Star } from 'lucide-react';
+import { getTasks, saveTask, deleteDBTask, getCompletions, saveCompletion } from './db';
+
+const DAYS_OF_WEEK = [
+  { id: 0, label: 'Su' },
+  { id: 1, label: 'Mo' },
+  { id: 2, label: 'Tu' },
+  { id: 3, label: 'We' },
+  { id: 4, label: 'Th' },
+  { id: 5, label: 'Fr' },
+  { id: 6, label: 'Sa' }
+];
 
 const DailyProgressTracker = () => {
   const [tasks, setTasks] = useState([]);
   const [newTaskName, setNewTaskName] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
+  const [newTaskDays, setNewTaskDays] = useState([0,1,2,3,4,5,6]);
+
   const [dailyCompletion, setDailyCompletion] = useState({});
-  const [totalDays, setTotalDays] = useState(1); // Changed default to 1 day
+  const [totalDays, setTotalDays] = useState(1);
+
   const [editingTask, setEditingTask] = useState(null);
+  const [editTaskData, setEditTaskData] = useState(null);
+
   const [viewMode, setViewMode] = useState('daily');
   const [showSummaries, setShowSummaries] = useState(false);
-  
+  const [isLoading, setIsLoading] = useState(true);
+
   const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'];
   const priorityColors = {
     high: '#FF4757',
@@ -19,96 +36,126 @@ const DailyProgressTracker = () => {
     low: '#2ED573'
   };
 
-  // Load data from memory on mount (simulating persistence)
+  const isTaskActiveOnDate = (task, dateObj) => {
+    if (!task.frequency) return true;
+    return task.frequency.includes(dateObj.getDay());
+  };
+
   useEffect(() => {
-    const savedTasks = localStorage.getItem('progressTrackerTasks');
-    const savedCompletions = localStorage.getItem('progressTrackerCompletions');
-    
-    if (savedTasks) {
+    const loadData = async () => {
       try {
-        const parsedTasks = JSON.parse(savedTasks);
-        setTasks(parsedTasks.sort((a, b) => {
-          const priorityOrder = { high: 3, medium: 2, low: 1 };
-          return priorityOrder[b.priority] - priorityOrder[a.priority];
-        }));
+        const savedTasks = await getTasks();
+        const savedCompletions = await getCompletions();
+
+        if (savedTasks.length > 0) {
+          setTasks(savedTasks.sort((a, b) => {
+            const priorityOrder = { high: 3, medium: 2, low: 1 };
+            return priorityOrder[b.priority] - priorityOrder[a.priority];
+          }));
+        } else {
+          const lsTasks = localStorage.getItem('progressTrackerTasks');
+          if (lsTasks) {
+             const parsed = JSON.parse(lsTasks);
+             setTasks(parsed);
+             parsed.forEach(t => saveTask(t));
+          }
+        }
+
+        if (Object.keys(savedCompletions).length > 0) {
+          setDailyCompletion(savedCompletions);
+        } else {
+          const lsComps = localStorage.getItem('progressTrackerCompletions');
+          if (lsComps) {
+             const parsed = JSON.parse(lsComps);
+             setDailyCompletion(parsed);
+             Object.keys(parsed).forEach(date => saveCompletion(date, parsed[date]));
+          }
+        }
       } catch (error) {
-        console.error('Failed to load tasks:', error);
+        console.error('Failed to load data:', error);
+      } finally {
+        setIsLoading(false);
       }
-    }
-    
-    if (savedCompletions) {
-      try {
-        setDailyCompletion(JSON.parse(savedCompletions));
-      } catch (error) {
-        console.error('Failed to load completions:', error);
-      }
-    }
+    };
+    loadData();
   }, []);
 
-  // Save data to memory when tasks or completions change
-  useEffect(() => {
-    if (tasks.length > 0) {
-      localStorage.setItem('progressTrackerTasks', JSON.stringify(tasks));
-    }
-  }, [tasks]);
-
-  useEffect(() => {
-    if (Object.keys(dailyCompletion).length > 0) {
-      localStorage.setItem('progressTrackerCompletions', JSON.stringify(dailyCompletion));
-    }
-  }, [dailyCompletion]);
-
-  const addTask = () => {
+  const addTask = async () => {
     if (newTaskName.trim()) {
       const newTask = {
         id: Date.now(),
         name: newTaskName.trim(),
         color: colors[tasks.length % colors.length],
         priority: newTaskPriority,
+        frequency: newTaskDays,
         completedDays: 0,
         streak: 0,
         createdAt: new Date().toISOString()
       };
-      
+
       const updatedTasks = [...tasks, newTask].sort((a, b) => {
         const priorityOrder = { high: 3, medium: 2, low: 1 };
         return priorityOrder[b.priority] - priorityOrder[a.priority];
       });
-      
+
       setTasks(updatedTasks);
+      await saveTask(newTask);
       setNewTaskName('');
       setNewTaskPriority('medium');
+      setNewTaskDays([0,1,2,3,4,5,6]);
     }
   };
 
-  const updateTask = (taskId, updates) => {
-    const updatedTasks = tasks.map(task => 
-      task.id === taskId ? { ...task, ...updates } : task
-    ).sort((a, b) => {
+  const startEditing = (task) => {
+    setEditingTask(task.id);
+    setEditTaskData({
+      name: task.name,
+      priority: task.priority,
+      frequency: task.frequency || [0,1,2,3,4,5,6]
+    });
+  };
+
+  const updateTask = async (taskId, updates) => {
+    let modifiedTask = null;
+    const updatedTasks = tasks.map(task => {
+      if (task.id === taskId) {
+        modifiedTask = { ...task, ...updates };
+        return modifiedTask;
+      }
+      return task;
+    }).sort((a, b) => {
       const priorityOrder = { high: 3, medium: 2, low: 1 };
       return priorityOrder[b.priority] - priorityOrder[a.priority];
     });
-    
+
     setTasks(updatedTasks);
+    if (modifiedTask) await saveTask(modifiedTask);
     setEditingTask(null);
   };
 
-  const removeTask = (taskId) => {
+  const removeTask = async (taskId) => {
     setTasks(tasks.filter(task => task.id !== taskId));
+    await deleteDBTask(taskId);
+
     const newDailyCompletion = { ...dailyCompletion };
-    Object.keys(newDailyCompletion).forEach(date => {
-      delete newDailyCompletion[date][taskId];
-    });
+    const dates = Object.keys(newDailyCompletion);
+    for (const date of dates) {
+      if (newDailyCompletion[date][taskId] !== undefined) {
+        delete newDailyCompletion[date][taskId];
+        await saveCompletion(date, newDailyCompletion[date]);
+      }
+    }
     setDailyCompletion(newDailyCompletion);
   };
 
-  const toggleTaskCompletion = (taskId, date = getTodayDate()) => {
+  const toggleTaskCompletion = async (taskId, date = getTodayDate()) => {
     const newDailyCompletion = { ...dailyCompletion };
     if (!newDailyCompletion[date]) {
       newDailyCompletion[date] = {};
     }
     newDailyCompletion[date][taskId] = !newDailyCompletion[date][taskId];
     setDailyCompletion(newDailyCompletion);
+    await saveCompletion(date, newDailyCompletion[date]);
   };
 
   const getTodayDate = () => {
@@ -117,37 +164,48 @@ const DailyProgressTracker = () => {
 
   const getTaskCompletionRate = (taskId) => {
     let completedCount = 0;
+    let expectedCount = 0;
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(endDate.getDate() - totalDays + 1);
 
+    const taskObj = tasks.find(t => t.id === taskId);
+    if (!taskObj) return 0;
+
     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const dateStr = d.toLocaleDateString('en-CA');
-      if (dailyCompletion[dateStr] && dailyCompletion[dateStr][taskId]) {
-        completedCount++;
+      if (isTaskActiveOnDate(taskObj, d)) {
+        expectedCount++;
+        const dateStr = d.toLocaleDateString('en-CA');
+        if (dailyCompletion[dateStr] && dailyCompletion[dateStr][taskId]) {
+          completedCount++;
+        }
       }
     }
-    
-    return Math.round((completedCount / totalDays) * 100);
+
+    if (expectedCount === 0) return 0;
+    return Math.round((completedCount / expectedCount) * 100);
   };
 
   const getStreak = (taskId) => {
     let streak = 0;
     const today = new Date();
-    
+    const taskObj = tasks.find(t => t.id === taskId);
+    if (!taskObj) return 0;
+
     for (let i = 0; i < 30; i++) {
       const date = new Date(today);
       date.setDate(today.getDate() - i);
-      const dateStr = date.toLocaleDateString('en-CA')
-      ;
-      
-      if (dailyCompletion[dateStr] && dailyCompletion[dateStr][taskId]) {
-        streak++;
-      } else {
-        break;
+
+      if (isTaskActiveOnDate(taskObj, date)) {
+        const dateStr = date.toLocaleDateString('en-CA');
+        if (dailyCompletion[dateStr] && dailyCompletion[dateStr][taskId]) {
+          streak++;
+        } else {
+          break;
+        }
       }
     }
-    
+
     return streak;
   };
 
@@ -169,7 +227,7 @@ const DailyProgressTracker = () => {
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(endDate.getDate() - totalDays + 1);
-    
+
     const dates = [];
     for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
       dates.push(new Date(d));
@@ -180,26 +238,28 @@ const DailyProgressTracker = () => {
   const getWeeklySummary = () => {
     const weeks = [];
     const today = new Date();
-    
+
     for (let i = 0; i < 4; i++) {
       const weekEnd = new Date(today);
       weekEnd.setDate(today.getDate() - (i * 7));
       const weekStart = new Date(weekEnd);
       weekStart.setDate(weekEnd.getDate() - 6);
-      
+
       let totalCompletions = 0;
       let totalPossible = 0;
-      
+
       for (let d = new Date(weekStart); d <= weekEnd; d.setDate(d.getDate() + 1)) {
         const dateStr = d.toLocaleDateString('en-CA');
         tasks.forEach(task => {
-          totalPossible++;
-          if (dailyCompletion[dateStr] && dailyCompletion[dateStr][task.id]) {
-            totalCompletions++;
+          if (isTaskActiveOnDate(task, d)) {
+            totalPossible++;
+            if (dailyCompletion[dateStr] && dailyCompletion[dateStr][task.id]) {
+              totalCompletions++;
+            }
           }
         });
       }
-      
+
       weeks.push({
         week: `Week ${4 - i}`,
         completion: totalPossible > 0 ? Math.round((totalCompletions / totalPossible) * 100) : 0,
@@ -207,37 +267,39 @@ const DailyProgressTracker = () => {
         endDate: weekEnd.toLocaleDateString()
       });
     }
-    
+
     return weeks.reverse();
   };
 
   const getMonthlySummary = () => {
     const months = [];
     const today = new Date();
-    
+
     for (let i = 0; i < 3; i++) {
       const monthDate = new Date(today.getFullYear(), today.getMonth() - i, 1);
       const monthEnd = new Date(today.getFullYear(), today.getMonth() - i + 1, 0);
-      
+
       let totalCompletions = 0;
       let totalPossible = 0;
-      
+
       for (let d = new Date(monthDate); d <= monthEnd; d.setDate(d.getDate() + 1)) {
         const dateStr = d.toLocaleDateString('en-CA');
         tasks.forEach(task => {
-          totalPossible++;
-          if (dailyCompletion[dateStr] && dailyCompletion[dateStr][task.id]) {
-            totalCompletions++;
+          if (isTaskActiveOnDate(task, d)) {
+            totalPossible++;
+            if (dailyCompletion[dateStr] && dailyCompletion[dateStr][task.id]) {
+              totalCompletions++;
+            }
           }
         });
       }
-      
+
       months.push({
         month: monthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
         completion: totalPossible > 0 ? Math.round((totalCompletions / totalPossible) * 100) : 0
       });
     }
-    
+
     return months.reverse();
   };
 
@@ -269,11 +331,29 @@ const DailyProgressTracker = () => {
     }
   };
 
+  const getActiveTasksForToday = () => {
+    const todayObj = new Date();
+    return tasks.filter(task => isTaskActiveOnDate(task, todayObj));
+  };
+
   const getTodayCompletionCount = () => {
     const today = getTodayDate();
-    if (!dailyCompletion[today]) return 0;
-    return Object.values(dailyCompletion[today]).filter(Boolean).length;
+    const todayObj = new Date();
+
+    let count = 0;
+    tasks.forEach(task => {
+       if (isTaskActiveOnDate(task, todayObj)) {
+         if (dailyCompletion[today] && dailyCompletion[today][task.id]) {
+            count++;
+         }
+       }
+    });
+    return count;
   };
+
+  if (isLoading) {
+    return <div className="min-h-screen flex items-center justify-center text-gray-500">Loading progress...</div>;
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 p-6">
@@ -281,7 +361,7 @@ const DailyProgressTracker = () => {
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-2">Daily Progress Tracker</h1>
-          <p className="text-gray-600">Track your daily habits and visualize your progress with priority scheduling</p>
+          <p className="text-gray-600">Track your tasks and visualize your progress with priority scheduling</p>
         </div>
 
         {/* View Mode Selector */}
@@ -314,7 +394,7 @@ const DailyProgressTracker = () => {
               </div>
             </div>
           </div>
-          
+
           <div className="bg-white rounded-xl p-6 shadow-lg border-l-4 border-green-500 transform hover:scale-105 transition-transform">
             <div className="flex items-center">
               <Calendar className="h-8 w-8 text-green-500 mr-3" />
@@ -324,21 +404,21 @@ const DailyProgressTracker = () => {
               </div>
             </div>
           </div>
-          
+
           <div className="bg-white rounded-xl p-6 shadow-lg border-l-4 border-orange-500 transform hover:scale-105 transition-transform">
             <div className="flex items-center">
               <TrendingUp className="h-8 w-8 text-orange-500 mr-3" />
               <div>
                 <p className="text-sm text-gray-600">
-                  {totalDays === 1 ? 'Completed Today' : 'Active Tasks'}
+                  {totalDays === 1 ? 'Completed Today' : 'Total Active Tasks'}
                 </p>
                 <p className="text-2xl font-bold text-gray-800">
-                  {totalDays === 1 ? `${getTodayCompletionCount()}/${tasks.length}` : tasks.length}
+                  {totalDays === 1 ? `${getTodayCompletionCount()}/${getActiveTasksForToday().length}` : tasks.length}
                 </p>
               </div>
             </div>
           </div>
-          
+
           <div className="bg-white rounded-xl p-6 shadow-lg border-l-4 border-purple-500 transform hover:scale-105 transition-transform">
             <div className="flex items-center">
               <Award className="h-8 w-8 text-purple-500 mr-3" />
@@ -356,15 +436,15 @@ const DailyProgressTracker = () => {
           {/* Task Management */}
           <div className="bg-white rounded-xl p-6 shadow-lg">
             <h2 className="text-2xl font-bold text-gray-800 mb-6">Task Management</h2>
-            
+
             {/* Add New Task */}
-            <div className="space-y-3 mb-6">
+            <div className="space-y-4 mb-8">
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={newTaskName}
                   onChange={(e) => setNewTaskName(e.target.value)}
-                  placeholder="Add a new daily task..."
+                  placeholder="Add a new task..."
                   className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                   onKeyPress={(e) => e.key === 'Enter' && addTask()}
                 />
@@ -384,6 +464,26 @@ const DailyProgressTracker = () => {
                   <Plus className="h-4 w-4" />
                   Add
                 </button>
+              </div>
+              <div className="flex gap-2 items-center">
+                <label className="text-sm font-medium text-gray-700 w-20">Repeat on:</label>
+                {DAYS_OF_WEEK.map(day => (
+                  <button
+                    key={day.id}
+                    onClick={() => {
+                      if (newTaskDays.includes(day.id)) {
+                        setNewTaskDays(newTaskDays.filter(d => d !== day.id));
+                      } else {
+                        setNewTaskDays([...newTaskDays, day.id].sort((a,b)=>a-b));
+                      }
+                    }}
+                    className={`w-8 h-8 rounded-full text-xs font-medium transition-colors ${
+                      newTaskDays.includes(day.id) ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                    }`}
+                  >
+                    {day.label}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -406,49 +506,70 @@ const DailyProgressTracker = () => {
 
             {/* Task List */}
             <div className="space-y-3">
-              {tasks.map((task, index) => (
-                <div 
-                  key={task.id} 
+              {tasks.map((task) => (
+                <div
+                  key={task.id}
                   className="flex items-center justify-between p-4 bg-gray-50 rounded-lg transform hover:scale-105 transition-all border-l-4"
                   style={{ borderLeftColor: priorityColors[task.priority] }}
                 >
                   <div className="flex items-center space-x-3 flex-1">
                     <div className="flex items-center space-x-2">
                       {getPriorityIcon(task.priority)}
-                      <div 
-                        className="w-4 h-4 rounded-full"
+                      <div
+                        className="w-4 h-4 rounded-full flex-shrink-0"
                         style={{ backgroundColor: task.color }}
                       />
                     </div>
-                    
+
                     {editingTask === task.id ? (
-                      <div className="flex items-center space-x-2 flex-1">
-                        <input
-                          type="text"
-                          defaultValue={task.name}
-                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
-                          onKeyPress={(e) => {
-                            if (e.key === 'Enter') {
-                              updateTask(task.id, { name: e.target.value });
-                            }
-                          }}
-                          autoFocus
-                        />
-                        <select
-                          defaultValue={task.priority}
-                          onChange={(e) => updateTask(task.id, { priority: e.target.value })}
-                          className="px-2 py-1 border border-gray-300 rounded text-sm"
-                        >
-                          <option value="high">High</option>
-                          <option value="medium">Medium</option>
-                          <option value="low">Low</option>
-                        </select>
-                        <button
-                          onClick={() => setEditingTask(null)}
-                          className="p-1 text-green-500 hover:bg-green-50 rounded"
-                        >
-                          <Save className="h-4 w-4" />
-                        </button>
+                      <div className="flex flex-col space-y-2 flex-1 mr-4">
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="text"
+                            value={editTaskData.name}
+                            onChange={(e) => setEditTaskData({...editTaskData, name: e.target.value})}
+                            className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                            onKeyPress={(e) => {
+                              if (e.key === 'Enter') {
+                                updateTask(task.id, editTaskData);
+                              }
+                            }}
+                            autoFocus
+                          />
+                          <select
+                            value={editTaskData.priority}
+                            onChange={(e) => setEditTaskData({...editTaskData, priority: e.target.value})}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm"
+                          >
+                            <option value="high">High</option>
+                            <option value="medium">Medium</option>
+                            <option value="low">Low</option>
+                          </select>
+                          <button
+                            onClick={() => updateTask(task.id, editTaskData)}
+                            className="p-1 text-green-500 hover:bg-green-50 rounded bg-white shadow-sm"
+                          >
+                            <Save className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <div className="flex items-center space-x-1">
+                          {DAYS_OF_WEEK.map(day => (
+                            <button
+                              key={day.id}
+                              onClick={() => {
+                                const newDays = editTaskData.frequency.includes(day.id)
+                                  ? editTaskData.frequency.filter(d => d !== day.id)
+                                  : [...editTaskData.frequency, day.id].sort((a,b)=>a-b);
+                                setEditTaskData({...editTaskData, frequency: newDays});
+                              }}
+                              className={`w-6 h-6 rounded-full text-[10px] font-medium transition-colors ${
+                                editTaskData.frequency.includes(day.id) ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                              }`}
+                            >
+                              {day.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     ) : (
                       <div className="flex-1">
@@ -460,7 +581,11 @@ const DailyProgressTracker = () => {
                         </div>
                         <div className="text-sm text-gray-600">
                           {totalDays === 1 ? (
-                            dailyCompletion[getTodayDate()]?.[task.id] ? 'Completed today' : 'Not completed today'
+                            isTaskActiveOnDate(task, new Date()) ? (
+                              dailyCompletion[getTodayDate()]?.[task.id] ? 'Completed today' : 'Not completed today'
+                            ) : (
+                              'Not scheduled today'
+                            )
                           ) : (
                             `${getTaskCompletionRate(task.id)}% completed • ${getStreak(task.id)} day streak`
                           )}
@@ -468,28 +593,34 @@ const DailyProgressTracker = () => {
                       </div>
                     )}
                   </div>
-                  
+
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => toggleTaskCompletion(task.id)}
-                      className={`px-3 py-1 rounded-lg text-sm font-medium transition-all transform hover:scale-105 ${
-                        dailyCompletion[getTodayDate()]?.[task.id]
-                          ? 'bg-green-500 text-white'
-                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                      }`}
-                    >
-                      {dailyCompletion[getTodayDate()]?.[task.id] ? 'Done Today' : 'Mark Done'}
-                    </button>
-                    
+                    {editingTask !== task.id && (
+                       isTaskActiveOnDate(task, new Date()) ? (
+                         <button
+                           onClick={() => toggleTaskCompletion(task.id)}
+                           className={`px-3 py-1 rounded-lg text-sm font-medium transition-all transform hover:scale-105 ${
+                             dailyCompletion[getTodayDate()]?.[task.id]
+                               ? 'bg-green-500 text-white'
+                               : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                           }`}
+                         >
+                           {dailyCompletion[getTodayDate()]?.[task.id] ? 'Done Today' : 'Mark Done'}
+                         </button>
+                       ) : (
+                         <span className="text-xs text-gray-400 px-2 italic">Off today</span>
+                       )
+                    )}
+
                     {editingTask !== task.id && (
                       <button
-                        onClick={() => setEditingTask(task.id)}
+                        onClick={() => startEditing(task)}
                         className="p-1 text-blue-500 hover:bg-blue-50 rounded transition-colors"
                       >
                         <Edit2 className="h-4 w-4" />
                       </button>
                     )}
-                    
+
                     <button
                       onClick={() => removeTask(task.id)}
                       className="p-1 text-red-500 hover:bg-red-50 rounded transition-all transform hover:scale-110"
@@ -514,20 +645,20 @@ const DailyProgressTracker = () => {
                 {showSummaries ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
               </button>
             </div>
-            
+
             {viewMode === 'daily' && tasks.length > 0 && (
               <div className="h-96">
                 <ResponsiveContainer width="100%" height="100%">
                   <RadarChart data={getRadarData()}>
                     <PolarGrid gridType="polygon" className="opacity-30" />
-                    <PolarAngleAxis 
-                      dataKey="task" 
+                    <PolarAngleAxis
+                      dataKey="task"
                       tick={{ fontSize: 12, fill: '#4B5563' }}
                       className="text-gray-600"
                     />
-                    <PolarRadiusAxis 
-                      angle={0} 
-                      domain={[0, 100]} 
+                    <PolarRadiusAxis
+                      angle={0}
+                      domain={[0, 100]}
                       tick={{ fontSize: 10, fill: '#9CA3AF' }}
                       tickCount={6}
                     />
@@ -573,10 +704,10 @@ const DailyProgressTracker = () => {
                     <XAxis dataKey="month" />
                     <YAxis domain={[0, 100]} />
                     <Tooltip formatter={(value) => [`${value}%`, 'Completion Rate']} />
-                    <Line 
-                      type="monotone" 
-                      dataKey="completion" 
-                      stroke="#8B5CF6" 
+                    <Line
+                      type="monotone"
+                      dataKey="completion"
+                      stroke="#8B5CF6"
                       strokeWidth={3}
                       dot={{ fill: '#8B5CF6', strokeWidth: 2, r: 6 }}
                     />
@@ -593,7 +724,7 @@ const DailyProgressTracker = () => {
                 </div>
               </div>
             )}
-            
+
             {/* Summaries */}
             {showSummaries && (
               <div className="mt-6 space-y-4">
@@ -610,7 +741,7 @@ const DailyProgressTracker = () => {
                     </div>
                   </div>
                 )}
-                
+
                 {viewMode === 'monthly' && (
                   <div className="p-4 bg-green-50 rounded-lg">
                     <h3 className="font-semibold text-green-800 mb-2">Monthly Summary</h3>
@@ -624,16 +755,16 @@ const DailyProgressTracker = () => {
                     </div>
                   </div>
                 )}
-                
+
                 <div className="p-4 bg-purple-50 rounded-lg">
                   <h3 className="font-semibold text-purple-800 mb-2">Priority Breakdown</h3>
                   <div className="grid grid-cols-3 gap-2 text-sm">
                     {['high', 'medium', 'low'].map(priority => {
                       const priorityTasks = tasks.filter(task => task.priority === priority);
-                      const avgCompletion = priorityTasks.length > 0 
+                      const avgCompletion = priorityTasks.length > 0
                         ? Math.round(priorityTasks.reduce((sum, task) => sum + getTaskCompletionRate(task.id), 0) / priorityTasks.length)
                         : 0;
-                      
+
                       return (
                         <div key={priority} className="text-center">
                           <div className="font-medium capitalize">{priority}</div>
@@ -655,10 +786,10 @@ const DailyProgressTracker = () => {
                     <h3 className="font-semibold text-indigo-800 mb-2">Today's Progress</h3>
                     <div className="text-center">
                       <div className="text-3xl font-bold text-indigo-600 mb-1">
-                        {getTodayCompletionCount()}/{tasks.length}
+                        {getTodayCompletionCount()}/{getActiveTasksForToday().length}
                       </div>
                       <div className="text-sm text-gray-600">
-                        {tasks.length > 0 ? `${Math.round((getTodayCompletionCount() / tasks.length) * 100)}% completed` : 'No tasks yet'}
+                        {getActiveTasksForToday().length > 0 ? `${Math.round((getTodayCompletionCount() / getActiveTasksForToday().length) * 100)}% completed` : 'No tasks assigned for today'}
                       </div>
                     </div>
                   </div>
@@ -673,7 +804,7 @@ const DailyProgressTracker = () => {
           <h2 className="text-2xl font-bold text-gray-800 mb-6">
             {totalDays === 1 ? "Today's Tasks" : "Daily History"}
           </h2>
-          
+
           <div className="overflow-x-auto">
             <div className="flex space-x-2 pb-4">
               {getPeriodDates().reverse().map((date, index) => (
@@ -686,27 +817,39 @@ const DailyProgressTracker = () => {
                       {date.getDate()}
                     </div>
                   </div>
-                  
+
                   <div className="space-y-1">
                     {tasks.map(task => {
-                      const dateStr = date.toISOString().split('T')[0];
+                      const dateStr = date.toLocaleDateString('en-CA');
                       const isCompleted = dailyCompletion[dateStr]?.[task.id];
+                      const isActive = isTaskActiveOnDate(task, date);
+
                       return (
-                        <button
-                          key={task.id}
-                          onClick={() => toggleTaskCompletion(task.id, dateStr)}
-                          className={`w-full h-6 rounded text-xs font-medium transition-all transform hover:scale-105 ${
-                            isCompleted 
-                              ? 'text-white shadow-sm'
-                              : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
-                          }`}
-                          style={{ 
-                            backgroundColor: isCompleted ? task.color : undefined 
-                          }}
-                          title={`${task.name} - ${date.toLocaleDateString()}`}
-                        >
-                          {isCompleted ? '✓' : '○'}
-                        </button>
+                        <div key={task.id} className="w-full h-6 flex items-center justify-center">
+                          {isActive ? (
+                            <button
+                              onClick={() => toggleTaskCompletion(task.id, dateStr)}
+                              className={`w-full h-full rounded text-xs font-medium transition-all transform hover:scale-105 ${
+                                isCompleted
+                                  ? 'text-white shadow-sm'
+                                  : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                              }`}
+                              style={{
+                                backgroundColor: isCompleted ? task.color : undefined
+                              }}
+                              title={`${task.name} - ${date.toLocaleDateString()}`}
+                            >
+                              {isCompleted ? '✓' : '○'}
+                            </button>
+                          ) : (
+                            <div
+                              className="w-[90%] h-[90%] rounded bg-gray-50/50 border border-gray-100 flex items-center justify-center cursor-not-allowed"
+                              title={`${task.name} not scheduled for ${date.toLocaleDateString()}`}
+                            >
+                              <span className="text-gray-300 text-[10px]">-</span>
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
