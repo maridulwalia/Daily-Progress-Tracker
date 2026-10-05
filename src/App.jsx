@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line } from 'recharts';
-import { Plus, X, Calendar, TrendingUp, Award, Target, Edit2, Save, AlertCircle, ChevronDown, ChevronUp, Star } from 'lucide-react';
+import { Plus, X, Calendar, TrendingUp, Award, Target, Edit2, Save, AlertCircle, ChevronDown, ChevronUp, Star, Upload } from 'lucide-react';
 import { getTasks, saveTask, deleteDBTask, getCompletions, saveCompletion } from './db';
 
 const DAYS_OF_WEEK = [
@@ -28,6 +28,8 @@ const DailyProgressTracker = () => {
   const [viewMode, setViewMode] = useState('daily');
   const [showSummaries, setShowSummaries] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  const fileInputRef = useRef(null);
 
   const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'];
   const priorityColors = {
@@ -103,6 +105,73 @@ const DailyProgressTracker = () => {
       setNewTaskName('');
       setNewTaskPriority('medium');
       setNewTaskDays([0,1,2,3,4,5,6]);
+    }
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target.result;
+      const lines = text.split(/\r?\n/);
+
+      const newTasks = [];
+      let baseLength = tasks.length;
+      let timeOffset = 0;
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        const parts = line.split('|').map(p => p.trim());
+        const taskName = parts[0];
+        if (!taskName) continue;
+
+        let priority = 'medium';
+        if (parts[1] && ['low', 'medium', 'high'].includes(parts[1].toLowerCase())) {
+          priority = parts[1].toLowerCase();
+        }
+
+        let days = [0, 1, 2, 3, 4, 5, 6];
+        if (parts[2]) {
+          const parsedDays = parts[2].split(/\s*,\s*/).map(Number).filter(d => !isNaN(d) && d >= 0 && d <= 6);
+          if (parsedDays.length > 0) {
+            days = parsedDays;
+          }
+        }
+
+        const newTask = {
+          id: Date.now() + timeOffset,
+          name: taskName,
+          color: colors[baseLength % colors.length],
+          priority,
+          frequency: days,
+          completedDays: 0,
+          streak: 0,
+          createdAt: new Date().toISOString()
+        };
+
+        newTasks.push(newTask);
+        baseLength++;
+        timeOffset++;
+      }
+
+      if (newTasks.length > 0) {
+        const updatedTasks = [...tasks, ...newTasks].sort((a, b) => {
+          const priorityOrder = { high: 3, medium: 2, low: 1 };
+          return priorityOrder[b.priority] - priorityOrder[a.priority];
+        });
+
+        setTasks(updatedTasks);
+        for (const t of newTasks) {
+          await saveTask(t);
+        }
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -435,7 +504,26 @@ const DailyProgressTracker = () => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Task Management */}
           <div className="bg-white rounded-xl p-6 shadow-lg">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6">Task Management</h2>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-gray-800">Task Management</h2>
+              <div>
+                <input
+                  type="file"
+                  accept=".txt"
+                  className="hidden"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center space-x-1 px-3 py-1 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors text-sm text-gray-700"
+                  title="Import from a .txt file (Format: TaskName | priority | 0,1,2,3,4,5,6)"
+                >
+                  <Upload className="h-4 w-4" />
+                  <span>Import .txt</span>
+                </button>
+              </div>
+            </div>
 
             {/* Add New Task */}
             <div className="space-y-4 mb-8">
