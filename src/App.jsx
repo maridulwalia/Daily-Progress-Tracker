@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line } from 'recharts';
-import { Plus, X, Calendar, TrendingUp, Award, Target, Edit2, Save, AlertCircle, ChevronDown, ChevronUp, Star, Upload } from 'lucide-react';
+import { Plus, X, Calendar, TrendingUp, Award, Target, Edit2, Save, AlertCircle, ChevronDown, ChevronUp, Star, Upload, CheckCircle2, Circle, BarChart2, Sparkles, Filter } from 'lucide-react';
 import { getTasks, saveTask, deleteDBTask, getCompletions, saveCompletion } from './db';
 
 const DAYS_OF_WEEK = [
@@ -26,6 +26,8 @@ const DailyProgressTracker = () => {
   const [editTaskData, setEditTaskData] = useState(null);
 
   const [viewMode, setViewMode] = useState('daily');
+  const [dailyChartType, setDailyChartType] = useState('bars'); // 'bars' | 'radar'
+  const [taskFilter, setTaskFilter] = useState('today'); // 'today' | 'all'
   const [showSummaries, setShowSummaries] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -270,6 +272,10 @@ const DailyProgressTracker = () => {
         if (dailyCompletion[dateStr] && dailyCompletion[dateStr][taskId]) {
           streak++;
         } else {
+          // If today has not been marked done yet, do not break streak (day is still ongoing)
+          if (i === 0) {
+            continue;
+          }
           break;
         }
       }
@@ -279,7 +285,16 @@ const DailyProgressTracker = () => {
   };
 
   const getRadarData = () => {
-    return tasks.map(task => ({
+    let relevantTasks = tasks;
+    if (viewMode === 'daily' || totalDays === 1) {
+      const todayObj = new Date();
+      relevantTasks = tasks.filter(t => isTaskActiveOnDate(t, todayObj));
+    } else {
+      const periodDates = getPeriodDates();
+      relevantTasks = tasks.filter(t => periodDates.some(d => isTaskActiveOnDate(t, d)));
+    }
+
+    return relevantTasks.map(task => ({
       task: task.name,
       completion: getTaskCompletionRate(task.id),
       fullMark: 100
@@ -287,9 +302,39 @@ const DailyProgressTracker = () => {
   };
 
   const getOverallScore = () => {
-    if (tasks.length === 0) return 0;
-    const totalCompletion = tasks.reduce((sum, task) => sum + getTaskCompletionRate(task.id), 0);
-    return Math.round(totalCompletion / tasks.length);
+    const todayObj = new Date();
+    let relevantTasks = tasks;
+    if (totalDays === 1) {
+      relevantTasks = tasks.filter(t => isTaskActiveOnDate(t, todayObj));
+    } else {
+      const periodDates = getPeriodDates();
+      relevantTasks = tasks.filter(t => periodDates.some(d => isTaskActiveOnDate(t, d)));
+    }
+
+    if (relevantTasks.length === 0) return 0;
+    const totalCompletion = relevantTasks.reduce((sum, task) => sum + getTaskCompletionRate(task.id), 0);
+    return Math.round(totalCompletion / relevantTasks.length);
+  };
+
+  const getDisplayedTasks = () => {
+    const todayObj = new Date();
+    const todayStr = getTodayDate();
+
+    if (taskFilter === 'today') {
+      const todayTasks = tasks.filter(task => isTaskActiveOnDate(task, todayObj));
+      // Auto-sort: pending tasks first (by priority), completed tasks at the bottom
+      return todayTasks.sort((a, b) => {
+        const aDone = !!dailyCompletion[todayStr]?.[a.id];
+        const bDone = !!dailyCompletion[todayStr]?.[b.id];
+        if (aDone !== bDone) {
+          return aDone ? 1 : -1;
+        }
+        const priorityOrder = { high: 3, medium: 2, low: 1 };
+        return priorityOrder[b.priority] - priorityOrder[a.priority];
+      });
+    }
+
+    return tasks;
   };
 
   const getPeriodDates = () => {
@@ -592,132 +637,200 @@ const DailyProgressTracker = () => {
               </select>
             </div>
 
+            {/* Task Filter Tabs */}
+            <div className="flex gap-2 mb-4">
+              <button
+                onClick={() => setTaskFilter('today')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+                  taskFilter === 'today'
+                    ? 'bg-blue-500 text-white shadow-md'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <Calendar className="h-4 w-4" />
+                Today's Tasks
+                <span className={`ml-1 px-2 py-0.5 rounded-full text-xs font-bold ${
+                  taskFilter === 'today' ? 'bg-blue-600' : 'bg-gray-200 text-gray-600'
+                }`}>
+                  {getActiveTasksForToday().length}
+                </span>
+              </button>
+              <button
+                onClick={() => setTaskFilter('all')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+                  taskFilter === 'all'
+                    ? 'bg-blue-500 text-white shadow-md'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <Filter className="h-4 w-4" />
+                All Tasks
+                <span className={`ml-1 px-2 py-0.5 rounded-full text-xs font-bold ${
+                  taskFilter === 'all' ? 'bg-blue-600' : 'bg-gray-200 text-gray-600'
+                }`}>
+                  {tasks.length}
+                </span>
+              </button>
+            </div>
+
             {/* Task List */}
             <div className="space-y-3">
-              {tasks.map((task) => (
-                <div
-                  key={task.id}
-                  className="flex items-center justify-between p-4 bg-gray-50 rounded-lg transform hover:scale-105 transition-all border-l-4"
-                  style={{ borderLeftColor: priorityColors[task.priority] }}
-                >
-                  <div className="flex items-center space-x-3 flex-1">
-                    <div className="flex items-center space-x-2">
-                      {getPriorityIcon(task.priority)}
-                      <div
-                        className="w-4 h-4 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: task.color }}
-                      />
-                    </div>
-
-                    {editingTask === task.id ? (
-                      <div className="flex flex-col space-y-2 flex-1 mr-4">
+              {getDisplayedTasks().length === 0 && taskFilter === 'today' ? (
+                <div className="text-center py-8 text-gray-500 bg-gray-50 rounded-lg">
+                  <Calendar className="h-12 w-12 mx-auto mb-2 opacity-40" />
+                  <p className="font-medium text-gray-700">No tasks scheduled for today</p>
+                  <p className="text-sm mt-1">Switch to "All Tasks" to manage your full schedule.</p>
+                </div>
+              ) : (
+                getDisplayedTasks().map((task) => {
+                  const isDoneToday = !!dailyCompletion[getTodayDate()]?.[task.id];
+                  return (
+                    <div
+                      key={task.id}
+                      className={`flex items-center justify-between p-4 rounded-lg transform hover:scale-105 transition-all border-l-4 ${
+                        taskFilter === 'today' && isDoneToday
+                          ? 'bg-green-50/50 border-green-400'
+                          : 'bg-gray-50 border-' + task.priority
+                      }`}
+                      style={{ borderLeftColor: taskFilter === 'today' && isDoneToday ? undefined : priorityColors[task.priority] }}
+                    >
+                      <div className="flex items-center space-x-3 flex-1">
                         <div className="flex items-center space-x-2">
-                          <input
-                            type="text"
-                            value={editTaskData.name}
-                            onChange={(e) => setEditTaskData({...editTaskData, name: e.target.value})}
-                            className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
-                            onKeyPress={(e) => {
-                              if (e.key === 'Enter') {
-                                updateTask(task.id, editTaskData);
-                              }
-                            }}
-                            autoFocus
+                          {getPriorityIcon(task.priority)}
+                          <div
+                            className="w-4 h-4 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: task.color }}
                           />
-                          <select
-                            value={editTaskData.priority}
-                            onChange={(e) => setEditTaskData({...editTaskData, priority: e.target.value})}
-                            className="px-2 py-1 border border-gray-300 rounded text-sm"
-                          >
-                            <option value="high">High</option>
-                            <option value="medium">Medium</option>
-                            <option value="low">Low</option>
-                          </select>
-                          <button
-                            onClick={() => updateTask(task.id, editTaskData)}
-                            className="p-1 text-green-500 hover:bg-green-50 rounded bg-white shadow-sm"
-                          >
-                            <Save className="h-4 w-4" />
-                          </button>
                         </div>
-                        <div className="flex items-center space-x-1">
-                          {DAYS_OF_WEEK.map(day => (
+
+                        {editingTask === task.id ? (
+                          <div className="flex flex-col space-y-2 flex-1 mr-4">
+                            <div className="flex items-center space-x-2">
+                              <input
+                                type="text"
+                                value={editTaskData.name}
+                                onChange={(e) => setEditTaskData({...editTaskData, name: e.target.value})}
+                                className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                                onKeyPress={(e) => {
+                                  if (e.key === 'Enter') {
+                                    updateTask(task.id, editTaskData);
+                                  }
+                                }}
+                                autoFocus
+                              />
+                              <select
+                                value={editTaskData.priority}
+                                onChange={(e) => setEditTaskData({...editTaskData, priority: e.target.value})}
+                                className="px-2 py-1 border border-gray-300 rounded text-sm"
+                              >
+                                <option value="high">High</option>
+                                <option value="medium">Medium</option>
+                                <option value="low">Low</option>
+                              </select>
+                              <button
+                                onClick={() => updateTask(task.id, editTaskData)}
+                                className="p-1 text-green-500 hover:bg-green-50 rounded bg-white shadow-sm"
+                              >
+                                <Save className="h-4 w-4" />
+                              </button>
+                            </div>
+                            <div className="flex items-center space-x-1">
+                              {DAYS_OF_WEEK.map(day => (
+                                <button
+                                  key={day.id}
+                                  onClick={() => {
+                                    const newDays = editTaskData.frequency.includes(day.id)
+                                      ? editTaskData.frequency.filter(d => d !== day.id)
+                                      : [...editTaskData.frequency, day.id].sort((a,b)=>a-b);
+                                    setEditTaskData({...editTaskData, frequency: newDays});
+                                  }}
+                                  className={`w-6 h-6 rounded-full text-[10px] font-medium transition-colors ${
+                                    editTaskData.frequency.includes(day.id) ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                                  }`}
+                                >
+                                  {day.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex-1">
+                            <div className="flex items-center space-x-2">
+                              <span className={`font-medium ${taskFilter === 'today' && isDoneToday ? 'line-through text-gray-500' : 'text-gray-800'}`}>
+                                {task.name}
+                              </span>
+                              <span className="text-xs px-2 py-1 rounded-full bg-gray-200 text-gray-600">
+                                {task.priority}
+                              </span>
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              {taskFilter === 'today' ? (
+                                <span>{getStreak(task.id)} day streak</span>
+                              ) : totalDays === 1 ? (
+                                isTaskActiveOnDate(task, new Date()) ? (
+                                  dailyCompletion[getTodayDate()]?.[task.id] ? 'Completed today' : 'Not completed today'
+                                ) : (
+                                  'Not scheduled today'
+                                )
+                              ) : (
+                                `${getTaskCompletionRate(task.id)}% completed • ${getStreak(task.id)} day streak`
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {editingTask !== task.id && taskFilter === 'today' && (
+                          <button
+                            onClick={() => toggleTaskCompletion(task.id)}
+                            className={`px-3 py-1 rounded-lg text-sm font-medium transition-all transform hover:scale-105 ${
+                              isDoneToday
+                                ? 'bg-green-500 text-white'
+                                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                            }`}
+                          >
+                            {isDoneToday ? 'Done' : 'Mark Done'}
+                          </button>
+                        )}
+
+                        {editingTask !== task.id && taskFilter === 'all' && (
+                          isTaskActiveOnDate(task, new Date()) ? (
                             <button
-                              key={day.id}
-                              onClick={() => {
-                                const newDays = editTaskData.frequency.includes(day.id)
-                                  ? editTaskData.frequency.filter(d => d !== day.id)
-                                  : [...editTaskData.frequency, day.id].sort((a,b)=>a-b);
-                                setEditTaskData({...editTaskData, frequency: newDays});
-                              }}
-                              className={`w-6 h-6 rounded-full text-[10px] font-medium transition-colors ${
-                                editTaskData.frequency.includes(day.id) ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                              onClick={() => toggleTaskCompletion(task.id)}
+                              className={`px-3 py-1 rounded-lg text-sm font-medium transition-all transform hover:scale-105 ${
+                                dailyCompletion[getTodayDate()]?.[task.id]
+                                  ? 'bg-green-500 text-white'
+                                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                               }`}
                             >
-                              {day.label}
+                              {dailyCompletion[getTodayDate()]?.[task.id] ? 'Done Today' : 'Mark Done'}
                             </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2">
-                          <span className="font-medium text-gray-800">{task.name}</span>
-                          <span className="text-xs px-2 py-1 rounded-full bg-gray-200 text-gray-600">
-                            {task.priority}
-                          </span>
-                        </div>
-                        <div className="text-sm text-gray-600">
-                          {totalDays === 1 ? (
-                            isTaskActiveOnDate(task, new Date()) ? (
-                              dailyCompletion[getTodayDate()]?.[task.id] ? 'Completed today' : 'Not completed today'
-                            ) : (
-                              'Not scheduled today'
-                            )
                           ) : (
-                            `${getTaskCompletionRate(task.id)}% completed • ${getStreak(task.id)} day streak`
-                          )}
-                        </div>
+                            <span className="text-xs text-gray-400 px-2 italic">Off today</span>
+                          )
+                        )}
+
+                        {editingTask !== task.id && (
+                          <button
+                            onClick={() => startEditing(task)}
+                            className="p-1 text-blue-500 hover:bg-blue-50 rounded transition-colors"
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => removeTask(task.id)}
+                          className="p-1 text-red-500 hover:bg-red-50 rounded transition-all transform hover:scale-110"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
                       </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {editingTask !== task.id && (
-                       isTaskActiveOnDate(task, new Date()) ? (
-                         <button
-                           onClick={() => toggleTaskCompletion(task.id)}
-                           className={`px-3 py-1 rounded-lg text-sm font-medium transition-all transform hover:scale-105 ${
-                             dailyCompletion[getTodayDate()]?.[task.id]
-                               ? 'bg-green-500 text-white'
-                               : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                           }`}
-                         >
-                           {dailyCompletion[getTodayDate()]?.[task.id] ? 'Done Today' : 'Mark Done'}
-                         </button>
-                       ) : (
-                         <span className="text-xs text-gray-400 px-2 italic">Off today</span>
-                       )
-                    )}
-
-                    {editingTask !== task.id && (
-                      <button
-                        onClick={() => startEditing(task)}
-                        className="p-1 text-blue-500 hover:bg-blue-50 rounded transition-colors"
-                      >
-                        <Edit2 className="h-4 w-4" />
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => removeTask(task.id)}
-                      className="p-1 text-red-500 hover:bg-red-50 rounded transition-all transform hover:scale-110"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -725,16 +838,73 @@ const DailyProgressTracker = () => {
           <div className="bg-white rounded-xl p-6 shadow-lg">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-gray-800">Progress Visualization</h2>
-              <button
-                onClick={() => setShowSummaries(!showSummaries)}
-                className="flex items-center space-x-1 px-3 py-1 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                <span className="text-sm">Summaries</span>
-                {showSummaries ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </button>
+              <div className="flex items-center gap-3">
+                {(viewMode === 'daily' || totalDays === 1) && (
+                  <div className="bg-gray-100 rounded-lg p-1 flex items-center">
+                    <button
+                      onClick={() => setDailyChartType('bars')}
+                      className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                        dailyChartType === 'bars' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      Bars
+                    </button>
+                    <button
+                      onClick={() => setDailyChartType('radar')}
+                      className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                        dailyChartType === 'radar' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      Radar
+                    </button>
+                  </div>
+                )}
+                <button
+                  onClick={() => setShowSummaries(!showSummaries)}
+                  className="flex items-center space-x-1 px-3 py-1 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  <span className="text-sm">Summaries</span>
+                  {showSummaries ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
 
-            {viewMode === 'daily' && tasks.length > 0 && (
+            {viewMode === 'daily' && getActiveTasksForToday().length === 0 && (
+              <div className="h-96 flex flex-col items-center justify-center text-gray-500 bg-gray-50 rounded-xl">
+                <Calendar className="h-16 w-16 mx-auto mb-4 opacity-40 text-blue-400" />
+                <p className="text-lg font-medium text-gray-700">No tasks scheduled for today.</p>
+                <p className="text-sm mt-1">Enjoy your day off or update your schedule in Task Management!</p>
+              </div>
+            )}
+
+            {viewMode === 'daily' && getActiveTasksForToday().length > 0 && dailyChartType === 'bars' && (
+              <div className="h-96 overflow-y-auto pr-2 space-y-4">
+                {getActiveTasksForToday().map(task => {
+                  const rate = getTaskCompletionRate(task.id);
+                  const isDone = !!dailyCompletion[getTodayDate()]?.[task.id];
+                  return (
+                    <div key={task.id} className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                      <div className="flex justify-between items-end mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="w-3 h-3 rounded-full" style={{ backgroundColor: task.color }} />
+                          <span className={`font-semibold ${isDone ? 'text-gray-500 line-through' : 'text-gray-800'}`}>{task.name}</span>
+                          {isDone && <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">DONE ✓</span>}
+                        </div>
+                        <span className="text-sm font-bold text-gray-700">{rate}%</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className="h-2.5 rounded-full transition-all duration-500 ease-out"
+                          style={{ width: `${rate}%`, backgroundColor: task.color }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {viewMode === 'daily' && getActiveTasksForToday().length > 0 && dailyChartType === 'radar' && (
               <div className="h-96">
                 <ResponsiveContainer width="100%" height="100%">
                   <RadarChart data={getRadarData()}>
@@ -893,58 +1063,203 @@ const DailyProgressTracker = () => {
             {totalDays === 1 ? "Today's Tasks" : "Daily History"}
           </h2>
 
-          <div className="overflow-x-auto">
-            <div className="flex space-x-2 pb-4">
-              {getPeriodDates().reverse().map((date, index) => (
-                <div key={index} className="flex-shrink-0 w-24">
-                  <div className="text-center mb-2">
-                    <div className="text-xs text-gray-500">
-                      {date.toLocaleDateString('en-US', { weekday: 'short' })}
-                    </div>
-                    <div className="text-sm font-medium text-gray-700">
-                      {date.getDate()}
-                    </div>
+          {/* Today's Checklist (totalDays === 1) */}
+          {totalDays === 1 && (
+            <div>
+              {/* Progress Bar */}
+              {getActiveTasksForToday().length > 0 && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 mb-4 border-b border-gray-100 gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-blue-600">
+                      {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {getTodayCompletionCount()} of {getActiveTasksForToday().length} tasks completed today
+                    </p>
                   </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-32 bg-gray-200 h-2 rounded-full overflow-hidden">
+                      <div
+                        className="bg-green-500 h-full transition-all duration-300 rounded-full"
+                        style={{
+                          width: `${getActiveTasksForToday().length > 0
+                            ? Math.round((getTodayCompletionCount() / getActiveTasksForToday().length) * 100)
+                            : 0}%`
+                        }}
+                      />
+                    </div>
+                    <span className="text-xs font-semibold text-gray-700">
+                      {getActiveTasksForToday().length > 0
+                        ? `${Math.round((getTodayCompletionCount() / getActiveTasksForToday().length) * 100)}%`
+                        : '0%'}
+                    </span>
+                  </div>
+                </div>
+              )}
 
-                  <div className="space-y-1">
-                    {tasks.map(task => {
-                      const dateStr = date.toLocaleDateString('en-CA');
-                      const isCompleted = dailyCompletion[dateStr]?.[task.id];
-                      const isActive = isTaskActiveOnDate(task, date);
+              {/* 100% Celebration Banner */}
+              {getActiveTasksForToday().length > 0 && getTodayCompletionCount() === getActiveTasksForToday().length && (
+                <div className="mb-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-200 text-center">
+                  <div className="flex items-center justify-center gap-2 mb-1">
+                    <Sparkles className="h-5 w-5 text-yellow-500" />
+                    <span className="text-lg font-bold text-green-700">All tasks completed!</span>
+                    <Sparkles className="h-5 w-5 text-yellow-500" />
+                  </div>
+                  <p className="text-sm text-green-600">Amazing work! You've crushed every task today. 🎉</p>
+                </div>
+              )}
 
+              {/* Empty State */}
+              {getActiveTasksForToday().length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Calendar className="h-12 w-12 mx-auto mb-2 opacity-40 text-blue-500" />
+                  <p className="font-medium text-gray-700">No tasks scheduled for today</p>
+                  <p className="text-sm text-gray-500 mt-1">Enjoy your day off or update your task schedules in Task Management.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {getActiveTasksForToday()
+                    .sort((a, b) => {
+                      const aDone = !!dailyCompletion[getTodayDate()]?.[a.id];
+                      const bDone = !!dailyCompletion[getTodayDate()]?.[b.id];
+                      if (aDone !== bDone) return aDone ? 1 : -1;
+                      const po = { high: 3, medium: 2, low: 1 };
+                      return po[b.priority] - po[a.priority];
+                    })
+                    .map(task => {
+                      const isDone = !!dailyCompletion[getTodayDate()]?.[task.id];
                       return (
-                        <div key={task.id} className="w-full h-6 flex items-center justify-center">
-                          {isActive ? (
-                            <button
-                              onClick={() => toggleTaskCompletion(task.id, dateStr)}
-                              className={`w-full h-full rounded text-xs font-medium transition-all transform hover:scale-105 ${
-                                isCompleted
-                                  ? 'text-white shadow-sm'
-                                  : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
-                              }`}
-                              style={{
-                                backgroundColor: isCompleted ? task.color : undefined
-                              }}
-                              title={`${task.name} - ${date.toLocaleDateString()}`}
-                            >
-                              {isCompleted ? '✓' : '○'}
-                            </button>
-                          ) : (
-                            <div
-                              className="w-[90%] h-[90%] rounded bg-gray-50/50 border border-gray-100 flex items-center justify-center cursor-not-allowed"
-                              title={`${task.name} not scheduled for ${date.toLocaleDateString()}`}
-                            >
-                              <span className="text-gray-300 text-[10px]">-</span>
+                        <div
+                          key={task.id}
+                          onClick={() => toggleTaskCompletion(task.id)}
+                          className={`flex items-center justify-between p-3.5 rounded-xl border transition-all cursor-pointer ${
+                            isDone
+                              ? 'bg-green-50/50 border-green-200 hover:bg-green-50'
+                              : 'bg-white border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-3 flex-1 min-w-0">
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors flex-shrink-0 ${
+                              isDone
+                                ? 'bg-green-500 text-white shadow-sm'
+                                : 'border-2 border-gray-300 hover:border-blue-500 bg-white'
+                            }`}>
+                              {isDone && <CheckCircle2 className="h-4 w-4 stroke-[3]" />}
                             </div>
-                          )}
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center space-x-2">
+                                <span className={`font-semibold text-sm truncate ${
+                                  isDone ? 'line-through text-gray-500' : 'text-gray-800'
+                                }`}>
+                                  {task.name}
+                                </span>
+                                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: task.color }} />
+                              </div>
+                              <div className="flex items-center space-x-2 text-xs text-gray-500 mt-0.5">
+                                <span className="capitalize font-medium" style={{ color: priorityColors[task.priority] }}>
+                                  {task.priority}
+                                </span>
+                                <span>•</span>
+                                <span>{getStreak(task.id)} day streak</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <span className={`text-xs px-2.5 py-1 rounded-full font-medium ml-2 flex-shrink-0 ${
+                            isDone
+                              ? 'bg-green-100 text-green-700 font-semibold'
+                              : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {isDone ? 'Completed' : 'Pending'}
+                          </span>
                         </div>
                       );
                     })}
-                  </div>
                 </div>
-              ))}
+              )}
             </div>
-          </div>
+          )}
+
+          {/* Daily History Table (totalDays > 1) */}
+          {totalDays > 1 && (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-3 px-4 font-semibold text-gray-700 bg-white sticky left-0 z-10 min-w-[180px]" style={{ boxShadow: '2px 0 4px -2px rgba(0,0,0,0.1)' }}>
+                      Task
+                    </th>
+                    {getPeriodDates().reverse().map((date, index) => {
+                      const isToday = date.toLocaleDateString('en-CA') === getTodayDate();
+                      return (
+                        <th
+                          key={index}
+                          className={`text-center py-2 px-2 text-xs font-medium min-w-[48px] ${
+                            isToday ? 'bg-blue-50 text-blue-600 font-bold rounded-t-lg' : 'text-gray-600'
+                          }`}
+                        >
+                          <div>{date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                          <div className="text-sm">{date.getDate()}</div>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {tasks.map(task => (
+                    <tr key={task.id} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="py-2.5 px-4 bg-white sticky left-0 z-10" style={{ boxShadow: '2px 0 4px -2px rgba(0,0,0,0.1)' }}>
+                        <div className="flex items-center space-x-2">
+                          <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: task.color }} />
+                          <span className="text-sm font-medium text-gray-800 truncate max-w-[130px]">
+                            {task.name}
+                          </span>
+                          <span className="text-[10px] text-gray-400">
+                            {getTaskCompletionRate(task.id)}%
+                          </span>
+                        </div>
+                      </td>
+                      {getPeriodDates().reverse().map((date, index) => {
+                        const dateStr = date.toLocaleDateString('en-CA');
+                        const isCompleted = !!dailyCompletion[dateStr]?.[task.id];
+                        const isActive = isTaskActiveOnDate(task, date);
+                        const isToday = dateStr === getTodayDate();
+
+                        return (
+                          <td key={index} className={`text-center py-1.5 px-1 ${isToday ? 'bg-blue-50/40' : ''}`}>
+                            {isActive ? (
+                              <button
+                                onClick={() => toggleTaskCompletion(task.id, dateStr)}
+                                className={`w-7 h-7 mx-auto rounded-lg text-xs font-semibold flex items-center justify-center transition-transform hover:scale-110 ${
+                                  isCompleted
+                                    ? 'text-white shadow-sm'
+                                    : 'bg-gray-100 hover:bg-gray-200 text-gray-400'
+                                }`}
+                                style={{
+                                  backgroundColor: isCompleted ? (task.color || '#10B981') : undefined
+                                }}
+                                title={`${task.name}: ${isCompleted ? 'Completed' : 'Incomplete'} on ${date.toLocaleDateString()}`}
+                              >
+                                {isCompleted ? '✓' : '○'}
+                              </button>
+                            ) : (
+                              <div
+                                className="w-7 h-7 mx-auto flex items-center justify-center text-gray-300 text-xs"
+                                title={`${task.name} not scheduled for ${date.toLocaleDateString('en-US', { weekday: 'short' })}`}
+                              >
+                                —
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>
