@@ -546,7 +546,7 @@ const DailyProgressTracker = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="flex flex-col gap-8">
           {/* Task Management */}
           <div className="bg-white rounded-xl p-6 shadow-lg">
             <div className="flex items-center justify-between mb-6">
